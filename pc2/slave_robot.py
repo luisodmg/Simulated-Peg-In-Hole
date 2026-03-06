@@ -27,8 +27,8 @@ G_GRAV      = 9.81
 DT          = 0.01
 
 # ─────────── ganancias de impedancia ─────────────────────────────────────────
-KD_IMP = 400.0   # rigidez virtual [N/m]    — Kd de la impedancia
-BD_IMP = 40.0    # amortiguamiento virtual [N·s/m]
+KD_IMP = 150.0   # rigidez virtual [N/m]    — reducida para evitar saturación
+BD_IMP = 55.0    # amortiguamiento virtual [N·s/m]  — aumentado para estabilidad
 KP_ART = np.diag([100.0, 80.0, 60.0])   # ganancias Computed Torque
 KV_ART = np.diag([20.0,  16.0, 12.0])
 
@@ -210,8 +210,9 @@ def impedance_control(q, dq, x_des, dx_des, q_des_prev,
     # Velocidad cartesiana actual
     dx_cur = J @ dq
 
-    # Error cartesiano
+    # Error cartesiano (saturado para evitar fuerzas explosivas)
     e_x  = x_des - x_cur
+    e_x  = np.clip(e_x, -0.12, 0.12)   # máx 12 cm de error activo
     de_x = dx_des - dx_cur
 
     # Fuerza de impedancia (ley de resorte-amortiguador)
@@ -250,7 +251,7 @@ class SlaveNetServer:
         self.sock      = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(('', self.port_rx))
         self.sock.settimeout(0.005)
-        self.x_des    = np.array([0.55, 0.40])  # posición inicial deseada
+        self.x_des    = np.array([0.50, 0.25])  # posición inicial deseada
         self.gripper  = True
         self._thread  = threading.Thread(target=self._recv_loop, daemon=True)
         self._thread.start()
@@ -289,7 +290,7 @@ class SlaveRobot:
     """
     def __init__(self, master_ip="127.0.0.1"):
         # Estado inicial: robot extendido hacia el agujero
-        self.q  = np.array([0.6, -0.5, 0.1])
+        self.q  = np.array([0.4, -0.3, 0.2])
         self.dq = np.zeros(3)
         self.q_des_prev = self.q.copy()
 
@@ -308,16 +309,17 @@ class SlaveRobot:
         self.t   = 0.0
         self.contact_state = "APROXIMACIÓN"
 
-    def ik_dls(self, x_des, damp=0.01):
-        """Cinemática inversa por DLS — igual que en el maestro."""
+    def ik_dls(self, x_des, damp=0.05):
         q = self.q.copy()
-        for _ in range(8):
+        for _ in range(15):
             e = x_des - fk_3r(q)
             if np.linalg.norm(e) < 1e-4:
                 break
             J  = jacobian_3r(q)
             Jp = J.T @ np.linalg.inv(J @ J.T + damp**2 * np.eye(2))
-            q  = q + Jp @ e
+            dq = Jp @ e
+            dq = np.clip(dq, -0.3, 0.3)
+            q  = q + dq
         return q
 
     def step(self):

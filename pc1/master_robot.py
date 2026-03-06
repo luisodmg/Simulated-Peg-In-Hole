@@ -43,7 +43,7 @@ KP = np.diag([120.0, 100.0, 80.0])   # rigidez articular
 KV = np.diag([25.0,  20.0,  15.0])   # amortiguamiento
 
 # Paso de integración
-DT = 0.01    # 100 Hz
+DT = 0.02    # 100 Hz
 
 # ──────────────────────────────────────────────
 # CINEMÁTICA DIRECTA 3R PLANAR
@@ -352,7 +352,7 @@ class MasterRobot:
 
         # Velocidad de movimiento cartesiano (controlado por teclado)
         self.v_cart = np.zeros(2)
-        self.v_step = 0.5  # [m/s] por pulsación de tecla
+        self.v_step = 1.2  # [m/s] por pulsación de tecla
 
         # Red
         self.net = MasterNetClient(slave_ip)
@@ -407,13 +407,21 @@ class MasterRobot:
         x_cur = fk_3r(self.q)
         x_des = x_cur + self.v_cart * DT
 
+        # Limitar workspace a zona alcanzable
+        x_des[0] = np.clip(x_des[0], -0.7, 0.7)
+        x_des[1] = np.clip(x_des[1], -0.5, 0.7)
+        r = np.linalg.norm(x_des)
+        r_max = L1 + L2 + L3 - 0.05   # 0.82 m
+        if r > r_max:
+            x_des = x_des / r * r_max
+
         # 2. Cinemática inversa
         self.ik_dls(x_des)
 
-        # 3. Computed Torque con feedback háptico
+        # 3. Computed Torque con feedback háptico (factor β reducido)
         tau, e, de = computed_torque(
             self.q, self.dq, self.q_des, self.dq_des, self.ddq_des,
-            F_ext = 0.3 * self.net.Fe  # factor β de feedback háptico
+            F_ext = 0.1 * self.net.Fe  # factor β reducido para estabilidad
         )
 
         # 4. Integrar dinámica
